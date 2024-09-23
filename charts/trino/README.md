@@ -1,6 +1,6 @@
 # trino
 
-![Version: 0.25.0](https://img.shields.io/badge/Version-0.25.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 450](https://img.shields.io/badge/AppVersion-450-informational?style=flat-square)
+![Version: 0.29.0](https://img.shields.io/badge/Version-0.29.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 458](https://img.shields.io/badge/AppVersion-458-informational?style=flat-square)
 
 Fast distributed SQL query engine for big data analytics that helps you explore your data universe
 
@@ -54,8 +54,25 @@ Fast distributed SQL query engine for big data analytics that helps you explore 
 
   Trino supports multiple [authentication types](https://trino.io/docs/current/security/authentication-types.html): PASSWORD, CERTIFICATE, OAUTH2, JWT, KERBEROS.
 * `server.config.query.maxMemory` - string, default: `"4GB"`
-* `server.exchangeManager.name` - string, default: `"filesystem"`
-* `server.exchangeManager.baseDir` - string, default: `"/tmp/trino-local-file-system-exchange-manager"`
+* `server.exchangeManager` - object, default: `{}`  
+
+  Mandatory [exchange manager configuration](https://trino.io/docs/current/admin/fault-tolerant-execution.html#id1).
+  Used to set the name and location(s) of the spooling storage destination.
+  * To enable fault-tolerant execution, you must set the `retry-policy` property in `additionalConfigProperties`.
+  * Additional exchange manager configurations can be added to `additionalExchangeManagerProperties`.
+  Example:
+  ```yaml
+   server:
+     exchangeManager:
+       name: "filesystem"
+       baseDir: "/tmp/trino-local-file-system-exchange-manager"
+   additionalConfigProperties:
+    - retry-policy=TASK
+  additionalExchangeManagerProperties:
+    - exchange.sink-buffer-pool-min-size=10
+    - exchange.sink-buffers-per-partition=2
+    - exchange.source-concurrent-readers=4
+  ```
 * `server.workerExtraConfig` - string, default: `""`
 * `server.coordinatorExtraConfig` - string, default: `""`
 * `server.autoscaling.enabled` - bool, default: `false`
@@ -86,7 +103,17 @@ Fast distributed SQL query engine for big data analytics that helps you explore 
 * `accessControl` - object, default: `{}`  
 
   [System access control](https://trino.io/docs/current/security/built-in-system-access-control.html) configuration.
-  Example:
+  Set the type property to either:
+  * `configmap`, and provide the rule file contents in `rules`,
+  * `properties`, and provide configuration properties in `properties`.
+  Properties example:
+  ```yaml
+  type: properties
+  properties: |
+      access-control.name=custom-access-control
+      access-control.custom_key=custom_value
+  ```
+  Config map example:
   ```yaml
    type: configmap
    refreshPeriod: 60s
@@ -222,7 +249,16 @@ Fast distributed SQL query engine for big data analytics that helps you explore 
   ```yaml
    - io.airlift=DEBUG
   ```
-* `additionalExchangeManagerProperties` - list, default: `[]`
+* `additionalExchangeManagerProperties` - list, default: `[]`  
+
+  [Exchange manager properties](https://trino.io/docs/current/admin/fault-tolerant-execution.html#exchange-manager).
+  Example:
+  ```yaml
+   - exchange.s3.region=object-store-region
+   - exchange.s3.endpoint=your-object-store-endpoint
+   - exchange.s3.aws-access-key=your-access-key
+   - exchange.s3.aws-secret-key=your-secret-key
+  ```
 * `eventListenerProperties` - list, default: `[]`  
 
   [Event listener](https://trino.io/docs/current/develop/event-listener.html#event-listener) properties. To configure multiple event listeners, add them in `coordinator.additionalConfigFiles` and `worker.additionalConfigFiles`, and set the `event-listener.config-files` property in `additionalConfigProperties` to their locations.
@@ -293,8 +329,9 @@ Fast distributed SQL query engine for big data analytics that helps you explore 
        imagePullPolicy: IfNotPresent
        command: ['sleep', '1']
   ```
-* `securityContext.runAsUser` - int, default: `1000`
-* `securityContext.runAsGroup` - int, default: `1000`
+* `securityContext` - object, default: `{"runAsGroup":1000,"runAsUser":1000}`  
+
+  [Pod security context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod) configuration. To remove the default, set it to null (or `~`).
 * `containerSecurityContext` - object, default: `{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}`  
 
   [Container security context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-container) configuration.
@@ -309,6 +346,9 @@ Fast distributed SQL query engine for big data analytics that helps you explore 
 * `service.annotations` - object, default: `{}`
 * `service.type` - string, default: `"ClusterIP"`
 * `service.port` - int, default: `8080`
+* `service.nodePort` - string, default: `""`  
+
+  The port the service listens on the host, for NodePort type. If not set, Kubernetes will [allocate a port automatically](https://kubernetes.io/docs/concepts/services-networking/service/#nodeport-custom-port).
 * `auth` - object, default: `{}`  
 
   Available authentication methods.
@@ -616,12 +656,13 @@ Fast distributed SQL query engine for big data analytics that helps you explore 
 * `jmx.exporter.image` - string, default: `"bitnami/jmx-exporter:latest"`
 * `jmx.exporter.pullPolicy` - string, default: `"Always"`
 * `jmx.exporter.port` - int, default: `5556`
-* `jmx.exporter.configProperties` - list, default: `[]`  
+* `jmx.exporter.configProperties` - string, default: `""`  
 
-  JMX Config Properties is mounted to /etc/jmx-exporter/jmx-exporter-config.yaml
+  The string value is templated using `tpl`. JMX Config Properties is mounted to /etc/jmx-exporter/jmx-exporter-config.yaml
   Example:
   ```yaml
    configProperties: |-
+      hostPort: localhost:{{- .Values.jmx.registryPort }}
       startDelaySeconds: 0
       ssl: false
       lowercaseOutputName: false
@@ -640,6 +681,19 @@ Fast distributed SQL query engine for big data analytics that helps you explore 
           value: '$2'
           help: 'ThreadCount (java.lang<type=Threading><>ThreadCount)'
           type: UNTYPED
+* `jmx.exporter.securityContext` - object, default: `{}`
+* `jmx.exporter.resources` - object, default: `{}`  
+
+  It is recommended not to specify default resources and to leave this as a conscious choice for the user. This also increases chances charts run on environments with little resources, such as Minikube. If you do want to specify resources, use the following example, and adjust it as necessary.
+  Example:
+  ```yaml
+   limits:
+     cpu: 100m
+     memory: 128Mi
+   requests:
+     cpu: 100m
+     memory: 128Mi
+  ```
 * `serviceMonitor.enabled` - bool, default: `false`  
 
   Set to true to create resources for the [prometheus-operator](https://github.com/prometheus-operator/prometheus-operator).
@@ -668,4 +722,4 @@ Fast distributed SQL query engine for big data analytics that helps you explore 
 * `ingress.tls` - list, default: `[]`
 
 ----------------------------------------------
-Autogenerated from chart metadata using [helm-docs v1.13.1](https://github.com/norwoodj/helm-docs/releases/v1.13.1)
+Autogenerated from chart metadata using [helm-docs v1.14.2](https://github.com/norwoodj/helm-docs/releases/v1.14.2)
